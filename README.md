@@ -52,10 +52,11 @@ Los resultados se guardan en `output/`.
 Vision-City/
 ├── app.py
 ├── config/intersection.json
-├── data/videos/
+├── data/
+│   ├── catalogo_clips.csv
+│   └── videos/
 ├── docs/
 ├── output/
-├── tests/
 ├── .gitignore
 ├── CONTRIBUTING.md
 └── requirements.txt
@@ -68,6 +69,9 @@ Vision-City/
 - [Protocolo de evaluación](docs/protocolo_evaluacion.md)
 - [Bitácora](docs/bitacora.md)
 - [Guía de colaboración](CONTRIBUTING.md)
+
+Los videos no se suben al repositorio. Su origen y características se registran en
+[`data/catalogo_clips.csv`](data/catalogo_clips.csv).
 
 ## Alcance excluido por ahora
 
