@@ -1,33 +1,20 @@
 # Visión City
 
-Prototipo académico de visión artificial para detectar y contabilizar vehículos y peatones en video. Forma parte del Sprint I del proyecto **Visión City**.
+Prototipo académico de visión artificial para detectar, rastrear y contar cruces de vehículos y peatones en video con Python, OpenCV, Ultralytics YOLO11n y ByteTrack.
 
-> Estado actual: preparación técnica y prueba de concepto. El sistema todavía no controla semáforos ni reporta métricas finales de precisión.
+> Estado: prueba de concepto operable con resultados preliminares. Los cruces aún deben compararse con anotación manual antes de considerarse validados.
 
-## Objetivo de esta etapa
+## Alcance
 
-- Definir la tecnología y los contratos básicos entre módulos.
-- Preparar videos y un protocolo inicial de evaluación.
-- Ejecutar una prueba de concepto con Python, OpenCV y YOLO.
-- Generar evidencia reproducible: video procesado, conteos, CSV y métricas de rendimiento.
-
-## Clases consideradas
-
-- Persona
-- Bicicleta
-- Automóvil
-- Motocicleta
-- Autobús
-- Camión
+El programa trabaja con las clases persona, bicicleta, automóvil, motocicleta, autobús y camión. Genera un video anotado, un CSV por fotograma y un resumen JSON. No controla semáforos ni incluye dashboards, reconocimiento de placas o entrenamiento de modelos.
 
 ## Requisitos
 
-- Windows 10/11
-- Python 3.10–3.12 recomendado
-- Git
-- GPU NVIDIA opcional; la aplicación también puede ejecutarse con CPU
+- Windows 10/11 y Python 3.13.
+- `ultralytics`, `opencv-python`, `torch` y `lap`.
+- CPU o CUDA; se probó en una NVIDIA GeForce GTX 1660 SUPER.
 
-## Inicio rápido
+## Instalación
 
 ```powershell
 git clone https://github.com/Bertloc/Vision-City.git
@@ -38,28 +25,37 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Coloca un video en `data/videos/` y ejecuta:
+Los pesos `.pt`, videos y resultados se mantienen fuera de Git. Coloca el video localmente en `data/videos/` y ejecuta:
 
 ```powershell
-python app.py --source data/videos/trafico.mp4
+python app.py --source .\data\videos\trafico_cruce.mp4 --config .\config\intersection.json
 ```
 
-Los resultados se guardan en `output/`.
+`--show` abre una vista durante el procesamiento y es opcional. `--model` y `--conf` reemplazan los valores de la configuración cuando se proporcionan. Consulta todas las opciones con `python app.py --help`.
 
-## Estructura
+## Conteo por líneas
 
-```text
-Vision-City/
-├── app.py
-├── config/intersection.json
-├── data/
-│   ├── catalogo_clips.csv
-│   └── videos/
-├── docs/
-├── output/
-├── .gitignore
-├── CONTRIBUTING.md
-└── requirements.txt
+`config/intersection.json` define líneas mediante puntos normalizados `[x, y]`, clases permitidas, nombres de dirección e histéresis. La orientación va de `start` a `end`: un cruce hacia el lado positivo usa `directions.positive` y el contrario usa `directions.negative`.
+
+Para cada ID rastreado se conserva un historial corto del centro de su caja. Un cruce solo se registra cuando el centro sale de la banda de histéresis en el lado opuesto y la trayectoria intersecta el segmento finito. La primera observación no cuenta y cada ID cuenta como máximo una vez por línea.
+
+Las posiciones incluidas son preliminares. Se deben calibrar para el encuadre de cada cámara y validar contra conteo manual.
+
+## Métricas y salidas
+
+- El video muestra líneas, sentidos, cruces, objetos visibles, máximo simultáneo y FPS.
+- El CSV registra esas métricas por fotograma y el tiempo de procesamiento.
+- El JSON separa datos del video, rendimiento total, rendimiento tras 10 fotogramas de calentamiento, máximos, cruces e IDs observados.
+
+Los IDs observados son únicamente un dato diagnóstico: ByteTrack puede reasignarlos después de una oclusión, por lo que no representan objetos únicos ni flujo real.
+
+## Comprobaciones rápidas
+
+```powershell
+python -m py_compile app.py
+python -m unittest test_app.py
+python -m json.tool config\intersection.json
+python app.py --help
 ```
 
 ## Documentación
@@ -70,13 +66,4 @@ Vision-City/
 - [Bitácora](docs/bitacora.md)
 - [Guía de colaboración](CONTRIBUTING.md)
 
-Los videos no se suben al repositorio. Su origen y características se registran en
-[`data/catalogo_clips.csv`](data/catalogo_clips.csv).
-
-## Alcance excluido por ahora
-
-No se incluye entrenamiento desde cero, reconocimiento facial o de placas, control físico de semáforos, dashboard completo ni medición de reducción de tiempos de espera.
-
-## Equipo
-
-Proyecto académico colaborativo. Los integrantes y responsabilidades se registrarán en la bitácora.
+La procedencia y características de los clips se registran en [`data/catalogo_clips.csv`](data/catalogo_clips.csv).

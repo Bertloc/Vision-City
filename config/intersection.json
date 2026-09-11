@@ -1,6 +1,7 @@
 {
   "intersection_id": "VC-INT-001",
   "description": "Intersección piloto por definir",
+  "calibration_note": "Coordenadas preliminares; deben calibrarse para el encuadre de cada cámara.",
   "camera": {
     "source_type": "recorded_video",
     "position": "elevated_diagonal",
@@ -12,5 +13,31 @@
     "confidence_threshold": 0.35,
     "classes": ["persona", "bicicleta", "automovil", "motocicleta", "autobus", "camion"]
   },
-  "lanes": []
+  "lanes": [],
+  "counting_lines": [
+    {
+      "id": "vehiculos_horizontal",
+      "name": "Cruce de vehículos",
+      "start": [0.08, 0.62],
+      "end": [0.92, 0.62],
+      "classes": ["bicicleta", "automovil", "motocicleta", "autobus", "camion"],
+      "directions": {
+        "positive": "hacia abajo",
+        "negative": "hacia arriba"
+      },
+      "hysteresis": 0.01
+    },
+    {
+      "id": "peatones_vertical",
+      "name": "Cruce de peatones",
+      "start": [0.5, 0.12],
+      "end": [0.5, 0.92],
+      "classes": ["persona"],
+      "directions": {
+        "positive": "derecha a izquierda",
+        "negative": "izquierda a derecha"
+      },
+      "hysteresis": 0.01
+    }
+  ]
 }
