@@ -1,0 +1,16 @@
+{
+  "intersection_id": "VC-INT-001",
+  "description": "Intersección piloto por definir",
+  "camera": {
+    "source_type": "recorded_video",
+    "position": "elevated_diagonal",
+    "minimum_resolution": "1280x720",
+    "minimum_fps": 20
+  },
+  "detection": {
+    "model": "yolo11n.pt",
+    "confidence_threshold": 0.35,
+    "classes": ["persona", "bicicleta", "automovil", "motocicleta", "autobus", "camion"]
+  },
+  "lanes": []
+}

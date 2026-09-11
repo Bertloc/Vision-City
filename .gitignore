@@ -1,0 +1,29 @@
+# Entornos y caché de Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Modelos descargados automáticamente
+*.pt
+*.onnx
+
+# Videos y resultados (no subir archivos pesados)
+data/videos/*
+!data/videos/.gitkeep
+output/*
+!output/videos/
+!output/capturas/
+!output/videos/.gitkeep
+!output/capturas/.gitkeep
+
+# Editores y sistema operativo
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Variables locales o secretos
+.env
+.env.*
