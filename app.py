@@ -24,6 +24,8 @@ from traffic_analysis import TrafficAnalyzer
 from traffic_priority import PriorityCalculator, format_traffic_report
 from phase_manager import PhaseManager
 from traffic_light_controller import SimulationParameters, TrafficLightController, format_decision
+from decision_evaluator import EvaluationParameters
+from experience_logger import ExperienceLogger
 from traffic_state import (
     VEHICLE_CLASSES, bottom_center, count_vehicles_by_zone, validate_waiting_zones,
 )
@@ -317,7 +319,7 @@ def build_crossing_summary(
 
 def process_video(source, config_path="config/intersection.json", output_dir="output",
                   progress_callback=None, *, model=None, conf=None, show=False,
-                  simulation_confidence="high") -> dict[str, Any]:
+                  simulation_confidence="high", source_video_name=None) -> dict[str, Any]:
     """Pipeline compartido. callback(frames_procesados, total_o_None); devuelve rutas y resumen."""
     args = argparse.Namespace(source=str(source), config=str(config_path), output=str(output_dir),
                               model=model, conf=conf, show=show,
@@ -331,6 +333,8 @@ def process_video(source, config_path="config/intersection.json", output_dir="ou
                                  [zone["id"] for zone in config.get("waiting_zones", [])])
     controller = TrafficLightController(phase_manager.phases,
                                        SimulationParameters(**config.get("simulation_parameters", {})))
+    experiences = ExperienceLogger(source_video_name or args.source, phase_manager.phases,
+                                   EvaluationParameters(**config.get("experience_evaluation", {})))
     phase_names = {key: phase["name"] for key, phase in phase_manager.phases.items()}
     detection_config = config.get("detection", {})
     model_name = args.model or detection_config.get("model", "yolo11n.pt")
@@ -487,7 +491,19 @@ def process_video(source, config_path="config/intersection.json", output_dir="ou
                     priority = priority_calculator.calculate(analysis)
                     phase_priorities = phase_manager.aggregate(priority, traffic_state.vehicles_by_zone)
                 # El reloj virtual avanza cada frame; las observaciones siguen muestreadas a 1 Hz.
+                previous = {"current_phase": controller.current_phase,
+                            "current_light_state": controller.current_state,
+                            "time_since_last_green": {
+                                key: timestamp - value if value is not None else None
+                                for key, value in controller.last_served_at.items()}}
                 decision = controller.update(timestamp, phase_priorities, args.simulation_confidence)
+                if decision["decision"] in ("INICIAR", "FINALIZAR"):
+                    event_analysis = analyzer.analyze(traffic_state, memory.states, zone_names)
+                    event_priority = priority_calculator.calculate(event_analysis)
+                else:
+                    event_analysis, event_priority = analysis, priority
+                experiences.observe(decision, traffic_state, event_analysis, event_priority,
+                                    previous, analysis_timestamp)
                 if sampled or decision["decision"] != "MANTENER":
                     record = asdict(traffic_state)
                     record["analysis_timestamp"] = analysis_timestamp
@@ -583,6 +599,7 @@ def process_video(source, config_path="config/intersection.json", output_dir="ou
         "traffic_phases": list(phase_manager.phases.values()),
         "simulation_parameters": asdict(controller.parameters),
         "simulation_confidence": args.simulation_confidence,
+        "experience": experiences.summary(),
         "performance": {
             "initialization_seconds": round(initialization_seconds, 3),
             "total_processing_seconds": round(total_processing_seconds, 3),
@@ -621,6 +638,10 @@ def process_video(source, config_path="config/intersection.json", output_dir="ou
     print(f"CSV: {csv_path}")
     print(f"Resumen: {summary_path}")
     print(f"Estados de tráfico: {traffic_path}")
+    experience = summary["experience"]
+    print(f"Experiencias generadas: {experience['generated']} | Reward promedio: {experience['average_reward']} | "
+          f"Dataset acumulado: {experience['dataset_count']} experiencias")
+    print("Experiencias para entrenamiento futuro; actualmente no modifican las decisiones del controlador.")
     return {"video": video_path, "csv": csv_path, "json": summary_path,
             "jsonl": traffic_path, "summary": summary}
 

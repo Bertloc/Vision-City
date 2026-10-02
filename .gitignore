@@ -29,3 +29,7 @@ Thumbs.db
 # Variables locales o secretos
 .env
 .env.*
+
+# Dataset local acumulativo
+data/experience/*.jsonl
+data/experience/*.lock

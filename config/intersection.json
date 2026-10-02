@@ -38,6 +38,12 @@
     "average_weight": 1.0,
     "tie_tolerance": 0.1
   },
+  "experience_evaluation": {
+    "enabled": true,
+    "dataset_path": "data/experience/experiences.jsonl",
+    "demand_reduction_weight": 1.0,
+    "other_growth_penalty": 1.0
+  },
   "counting_lines": [
     {
       "id": "vehiculos_horizontal",

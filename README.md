@@ -380,6 +380,123 @@ aprendizaje, peatones avanzados, emergencias ni control físico.
 
 Los IDs observados son únicamente un dato diagnóstico: ByteTrack puede reasignarlos después de una oclusión, por lo que no representan objetos únicos ni flujo real.
 
+## Registro de experiencias
+
+El sistema guarda **qué vio**, **qué decisión tomó** y **qué ocurrió después**.
+Guardar experiencias **no significa aprender automáticamente**: son datos para entrenamiento
+futuro. Actualmente no modifican las decisiones del controlador y no hay entrenamiento ni RL.
+
+CLI y Streamlit usan el mismo `ExperienceLogger` dentro de `process_video`. Al evento `INICIAR`
+(entrada a GREEN) se abre una experiencia en memoria; al evento `FINALIZAR` (entrada a YELLOW)
+se captura AFTER, se evalúa y se agrega una sola línea. No se escribe una experiencia cada segundo.
+Si termina el video o falla el procesamiento durante GREEN, ese verde incompleto no se agrega.
+Las experiencias completas anteriores ya están guardadas.
+
+El dataset predeterminado es `data/experience/experiences.jsonl`, relativo al repositorio,
+independiente del directorio de salida y de los archivos temporales de Streamlit. Se abre en
+modo append, se vacía el buffer y se sincroniza a disco. No borres ese archivo si quieres
+conservar los videos anteriores. El dataset local y su archivo de bloqueo se excluyen de Git.
+
+Configuración opcional (los valores predeterminados también se aplican a configuraciones antiguas):
+
+```json
+"experience_evaluation": {
+  "enabled": true,
+  "dataset_path": "data/experience/experiences.jsonl",
+  "demand_reduction_weight": 1.0,
+  "other_growth_penalty": 1.0
+}
+```
+
+Reward inicial:
+
+```text
+S = zonas de la fase elegida
+O = unión de zonas de otras fases, excluyendo S
+demand_reduction = suma(before[z] - after[z], z en S)
+other_zone_growth = suma(max(after[z] - before[z], 0), z en O)
+reward = demand_reduction * demand_reduction_weight
+         - other_zone_growth * other_growth_penalty
+```
+
+Se penaliza cada zona que crece; la reducción en otra no cancela ese crecimiento. Una zona
+compartida se incluye una sola vez en O. Ejemplo: atendida 10 → 4 y otra 2 → 5 dan
+`reward = 6 - 3 = 3`. Es reducción de ocupación, **no vehículos que atravesaron el cruce**.
+No se usa `vehicles_served`, throughput, cola física ni espera individual, porque no están
+medidos de forma fiable. Espera por fase y anti-starvation quedan registrados para analizarse;
+esta fórmula inicial no añade penalizaciones por espera ni por aumento global que duplicarían
+parte de la penalización existente.
+
+Estructura exacta de cada línea (las estructuras internas reutilizan las dataclasses actuales):
+
+```text
+schema_version: 1
+id: UUID determinista de session_id + timestamp_decision + fase
+session_id: UUID nuevo por ejecución de process_video
+source_video: ruta de entrada o nombre original del archivo subido
+started_at: inicio de sesión ISO 8601 UTC
+timestamp_decision: segundos de la fuente al iniciar GREEN
+before:
+  traffic_state: {timestamp, vehicles_by_zone, total_vehicles}
+  analysis: {zona: {current_count, average_count, previous_count, delta,
+                    trend, growth_rate, sample_count, status}}
+  zone_priorities: {winner, reason, scores: {zona: {zone_id, score, components, reasons}}}
+  phase_priorities: {fase: {score, demand, components, reasons, waiting_seconds,
+                           starvation_bonus, effective_score}}
+  priority_analysis_timestamp: timestamp del análisis usado por el controlador
+  current_phase, current_light_state: fase y color ANTES de iniciar el nuevo verde
+  time_since_last_green: segundos desde último inicio por fase; null si nunca atendida
+  confidence, mode
+decision:
+  selected_phase, planned_green_seconds, phase_score, effective_score,
+  reasons, anti_starvation, mode, adaptive_decision
+after:
+  mismos campos que before (fase y color al terminar GREEN), más elapsed_seconds
+quality_reasons: motivos de baja calidad observados durante todo el verde
+evaluation:
+  reward: número o null
+  components: {demand_before, demand_after, demand_reduction, other_zone_growth}
+  weights: {demand_reduction_weight, other_growth_penalty}
+  training_eligible: true/false
+  reasons: explicación
+```
+
+BEFORE y AFTER capturan conteos y análisis actualizados del frame de transición. Las prioridades
+de fase son las que realmente usó el controlador, que mantiene su muestreo aproximadamente
+a 1 Hz; `priority_analysis_timestamp` hace explícita su antigüedad. Un historial insuficiente
+deja `growth_rate: null`, sin inventar tendencias medidas. Los conteos por zona pueden solaparse;
+la demanda es suma de ocupaciones, mientras `total_vehicles` cuenta IDs en la unión.
+
+Si en cualquier frame del verde hay `low`, `error`, modo fijo/SAFE_MODE o conteos inválidos,
+`training_eligible` es false, `reward` es null y `components` queda vacío. Una recuperación de
+confianza no borra la marca. `adaptive_decision` describe el modo al tomar la decisión; SAFE_MODE
+siempre da false. La confianza sigue siendo inyectada, no una estimación automática de YOLO.
+La elegibilidad técnica no garantiza que las zonas estén calibradas o que las detecciones sean correctas.
+
+Un bloqueo de archivo serializa la comprobación de IDs y el append incluso entre procesos.
+Guardar otra vez el mismo ID no agrega filas. Los reruns que muestran resultados no escriben.
+Pulsar Analizar de nuevo abre deliberadamente otra sesión, incluso con el mismo video.
+La comprobación recorre el JSONL: para datasets grandes, el siguiente cambio sería un índice
+con unicidad en una base de datos. Una última línea truncada o un JSON corrupto causa un error
+explícito; requiere revisión manual y no se sobrescribe silenciosamente.
+
+Al finalizar, CLI y Streamlit muestran cantidad generada, reward promedio (solo rewards
+numéricos) y tamaño acumulado al terminar esa ejecución. Streamlit añade una tabla sencilla.
+Sin zonas/fases no se generan experiencias; configura ambas antes de probar.
+
+Para comprobar que crece entre videos, ejecuta dos fuentes con la misma configuración y
+`dataset_path`; observa `Dataset acumulado` en ambos resúmenes. También puedes contar líneas:
+
+```powershell
+Get-Content data/experience/experiences.jsonl | Measure-Object -Line
+.\.venv\Scripts\python.exe -m unittest -v
+```
+
+Las pruebas de experiencias no ejecutan YOLO. Cubren ciclos de verde, rewards, append,
+sesiones, duplicados, confianza, SAFE_MODE, elegibilidad e incompletos. Después se podrá
+extraer `X = before`, `y = decision/evaluation`, separando por sesión para evaluar modelos;
+esa transformación y el entrenamiento todavía no se implementan.
+
 ## Comprobaciones rápidas
 
 ```powershell

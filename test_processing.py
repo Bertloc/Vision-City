@@ -58,6 +58,30 @@ class ProcessingTests(unittest.TestCase):
 
     @patch("app.torch.cuda.is_available", return_value=False)
     @patch("app.YOLO")
+    def test_two_video_sessions_append_using_shared_pipeline(self, yolo, _cuda):
+        yolo.return_value.track.side_effect = lambda frame, **kwargs: [
+            Mock(boxes=None, plot=lambda: frame.copy())]
+        config = json.loads(CONFIG.read_text(encoding="utf-8"))
+        config["waiting_zones"] = [{"id": "zone", "name": "Zona", "points": [[0, 0], [1, 0], [1, 1]]}]
+        config["traffic_phases"] = [{"id": "phase", "name": "Fase", "zones": ["zone"]}]
+        config["simulation_parameters"].update(min_green_seconds=0.25, max_green_seconds=0.25,
+                                                safe_green_seconds=0.25, all_red_seconds=0.25)
+        dataset = self.root / "experiences.jsonl"
+        config["experience_evaluation"] = {"dataset_path": str(dataset)}
+        path = self.root / "config.json"
+        path.write_text(json.dumps(config), encoding="utf-8")
+        with redirect_stdout(io.StringIO()):
+            first = process_video(self.video, path, self.root / "one")
+            original = dataset.read_bytes()
+            second = process_video(self.video, path, self.root / "two")
+        self.assertTrue(dataset.read_bytes().startswith(original))
+        self.assertEqual(first["summary"]["experience"]["generated"], 1)
+        self.assertEqual(second["summary"]["experience"]["dataset_count"], 2)
+        records = [json.loads(line) for line in dataset.read_text(encoding="utf-8").splitlines()]
+        self.assertNotEqual(records[0]["session_id"], records[1]["session_id"])
+
+    @patch("app.torch.cuda.is_available", return_value=False)
+    @patch("app.YOLO")
     def test_missing_video_and_model_error(self, yolo, _cuda):
         with redirect_stdout(io.StringIO()), self.assertRaises(FileNotFoundError):
             process_video(self.root / "missing.mp4", CONFIG, self.root / "results")

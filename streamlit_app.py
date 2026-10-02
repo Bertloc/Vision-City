@@ -52,6 +52,18 @@ def show_results(result):
     st.success("Video procesado correctamente")
     st.write(f"Frames procesados: {summary['frames_processed']} · "
              f"Duración: {summary['video']['duration_seconds']} s · Dispositivo: {summary['device']}")
+    experience = summary.get("experience", {})
+    if experience:
+        st.write(f"Experiencias generadas: {experience['generated']} · "
+                 f"Reward promedio: {experience['average_reward']} · "
+                 f"Dataset acumulado: {experience['dataset_count']} experiencias")
+        st.caption(f"Dataset: {experience['dataset_path']}")
+        if experience["incomplete"]:
+            st.caption("El último verde quedó incompleto y no se agregó al dataset.")
+        if experience["rows"]:
+            st.dataframe(experience["rows"], hide_index=True)
+    st.info("Las experiencias se registran para entrenamiento futuro. Actualmente NO modifican "
+            "automáticamente las decisiones del controlador.")
     decision = summary.get("final_decision", {})
     if decision:
         st.subheader("Estado final del cerebro")
@@ -136,7 +148,8 @@ def main():
                     source.write_bytes(uploaded_video.getbuffer())
                 status.info("Analizando video...")
                 with st.spinner("Procesando video..."):
-                    result = process_video(source, selected_config, output, on_progress)
+                    result = process_video(source, selected_config, output, on_progress,
+                                           source_video_name=uploaded_video.name if uploaded_video is not None else str(source))
                 # Conservar la configuración efectiva para poder interpretar el resultado.
                 (output / "configuration.json").write_bytes(config_data)
             status.info("Preparando video para el navegador...")
