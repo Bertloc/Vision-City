@@ -315,8 +315,15 @@ def build_crossing_summary(
     return summary
 
 
-def main() -> None:
-    args = parse_args()
+def process_video(source, config_path="config/intersection.json", output_dir="output",
+                  progress_callback=None, *, model=None, conf=None, show=False,
+                  simulation_confidence="high") -> dict[str, Any]:
+    """Pipeline compartido. callback(frames_procesados, total_o_None); devuelve rutas y resumen."""
+    args = argparse.Namespace(source=str(source), config=str(config_path), output=str(output_dir),
+                              model=model, conf=conf, show=show,
+                              simulation_confidence=simulation_confidence)
+    if progress_callback:
+        progress_callback(0, None)
     config = load_config(Path(args.config))
     analyzer = TrafficAnalyzer(**config.get("traffic_analysis", {}))
     priority_calculator = PriorityCalculator(**config.get("traffic_priority", {}))
@@ -344,6 +351,8 @@ def main() -> None:
     initialization_started = total_started
     model = YOLO(model_name)
     capture = open_source(args.source)
+    frame_count = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+    total_frames = int(frame_count) if math.isfinite(frame_count) and frame_count > 0 else None
     source_fps = capture.get(cv2.CAP_PROP_FPS)
     source_fps = source_fps if source_fps > 0 else 30.0
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -533,6 +542,8 @@ def main() -> None:
                         )
                 csv_writer.writerow(row)
                 frame_index += 1
+                if progress_callback:
+                    progress_callback(frame_index, total_frames)
 
                 if args.show:
                     cv2.imshow("Vision City - presiona Q para salir", annotated)
@@ -541,8 +552,11 @@ def main() -> None:
         finally:
             capture.release()
             writer.release()
-            cv2.destroyAllWindows()
+            if args.show:
+                cv2.destroyAllWindows()
 
+    if frame_index == 0:
+        raise ValueError("El video no contiene fotogramas decodificables.")
     wall_clock_elapsed = time.perf_counter() - total_started
     total_processing_seconds = initialization_seconds + sum(frame_times)
     stable_times = frame_times[WARMUP_FRAMES:]
@@ -562,6 +576,8 @@ def main() -> None:
         "confidence_threshold": float(confidence),
         "device": device_name,
         "frames_processed": frame_index,
+        "final_decision": decision,
+        "final_zone_priority": asdict(priority),
         "traffic_memory": [asdict(state) for state in memory.states],
         "waiting_zones": zones,
         "traffic_phases": list(phase_manager.phases.values()),
@@ -605,6 +621,14 @@ def main() -> None:
     print(f"CSV: {csv_path}")
     print(f"Resumen: {summary_path}")
     print(f"Estados de tráfico: {traffic_path}")
+    return {"video": video_path, "csv": csv_path, "json": summary_path,
+            "jsonl": traffic_path, "summary": summary}
+
+
+def main() -> None:
+    args = parse_args()
+    process_video(args.source, args.config, args.output, model=args.model, conf=args.conf,
+                  show=args.show, simulation_confidence=args.simulation_confidence)
 
 
 if __name__ == "__main__":

@@ -33,6 +33,55 @@ python app.py --source .\data\videos\trafico_cruce.mp4 --config .\config\interse
 
 `--show` abre una vista durante el procesamiento y es opcional. `--model` y `--conf` reemplazan los valores de la configuración cuando se proporcionan. Consulta todas las opciones con `python app.py --help`.
 
+## Interfaz gráfica
+
+Instala las dependencias del proyecto y abre la interfaz desde su raíz:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m streamlit run streamlit_app.py
+```
+
+Con el entorno virtual activado, el comando equivalente es:
+
+```powershell
+streamlit run streamlit_app.py
+```
+
+1. Selecciona un video de `data/videos` o sube un `.mp4`, `.avi` o `.mov`.
+2. Selecciona `config/intersection.json` u otro JSON, o sube una configuración propia.
+   `config/simulation.json` corresponde al simulador de estados artificiales, no a videos.
+3. Presiona **Analizar**. Verás el estado de procesamiento y el avance por frames cuando el
+   archivo informe su longitud; en caso contrario se indica el frame procesado.
+4. Revisa el video, resumen, estado final del semáforo virtual, tabla y gráfica de vehículos
+   por zona. Descarga CSV, resumen JSON y JSONL (botones disponibles hasta 20 MiB por archivo).
+
+Si no hay `waiting_zones`, aparece una advertencia: el análisis puede ejecutarse, pero sus
+resultados de tráfico no son representativos. No se crean polígonos ni fases automáticamente.
+
+CLI e interfaz llaman a `app.process_video(source, config_path, output_dir, progress_callback)`.
+El callback recibe `(frames_procesados, total_o_None)`. La función devuelve las rutas `video`,
+`csv`, `json`, `jsonl` y el `summary`; no se buscan resultados por fecha ni por nombre aproximado.
+El resumen añade `final_decision` y `final_zone_priority` sin alterar los campos anteriores.
+El comando `python app.py --source ... --config ...` conserva sus opciones.
+
+Cada ejecución de la interfaz usa una carpeta propia bajo `output/ui/`. Los archivos subidos
+son copias temporales eliminadas al terminar o fallar; no se modifican originales. Los resultados
+y una copia de la configuración efectiva se conservan para revisarlos después. `output/` ya está
+ignorado por Git. Los resultados permanecen en disco hasta que el usuario los elimine.
+
+El pipeline conserva su MP4V original. Solo la interfaz convierte una copia final a H.264,
+YUV420p y MP4 con `faststart`, mediante FFmpeg incluido en `imageio-ffmpeg`; esa copia termina
+en `_web.mp4`. Esto permite reproducirla con `st.video`. Se mantiene el comportamiento sin audio
+del video anotado. Si falla la conversión, el análisis sigue disponible y se muestra la ruta
+del MP4 original. Véase [compatibilidad de video en Streamlit](https://docs.streamlit.io/develop/api-reference/media/st.video).
+
+La UI muestra errores resumidos de configuración, video, modelo o procesamiento, sin traceback.
+Conserva la selección automática CPU/CUDA; no hay reintento automático en CPU si CUDA falla.
+El análisis es síncrono con progreso: no hay cola, cancelación ni procesamiento concurrente
+administrado. Archivos grandes requieren memoria para subida/reproducción y espacio para ambas
+copias del resultado; el límite de subida depende de la configuración de Streamlit.
+
 ## Conteo por líneas
 
 `config/intersection.json` define líneas mediante puntos normalizados `[x, y]`, clases permitidas, nombres de dirección e histéresis. La orientación va de `start` a `end`: un cruce hacia el lado positivo usa `directions.positive` y el contrario usa `directions.negative`.
