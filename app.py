@@ -9,6 +9,7 @@ import math
 import statistics
 import time
 import unicodedata
+from dataclasses import asdict
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,15 @@ from typing import Any
 import cv2
 import torch
 from ultralytics import YOLO
+
+from traffic_memory import TrafficMemory
+from traffic_analysis import TrafficAnalyzer
+from traffic_priority import PriorityCalculator, format_traffic_report
+from phase_manager import PhaseManager
+from traffic_light_controller import SimulationParameters, TrafficLightController, format_decision
+from traffic_state import (
+    VEHICLE_CLASSES, bottom_center, count_vehicles_by_zone, validate_waiting_zones,
+)
 
 COCO_CLASSES = {
     0: "persona",
@@ -48,6 +58,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--show", action="store_true", help="Muestra la ventana durante el proceso.")
     parser.add_argument("--output", default="output", help="Directorio de resultados.")
+    parser.add_argument("--simulation-confidence", choices=("high", "low", "error"), default="high",
+                        help="Confianza inyectada para el semáforo virtual; no se estima desde YOLO.")
     return parser.parse_args()
 
 
@@ -96,6 +108,7 @@ def load_config(path: Path) -> dict[str, Any]:
         if not isinstance(hysteresis, (int, float)) or not 0 < hysteresis < 0.25:
             raise ValueError(f"{prefix}.hysteresis debe estar entre 0 y 0.25.")
         line["hysteresis"] = float(hysteresis)
+    validate_waiting_zones(config.get("waiting_zones", []))
     return config
 
 
@@ -214,6 +227,18 @@ def draw_counting_lines(frame: Any, lines: list[dict[str, Any]]) -> None:
         draw_label(frame, f"- {line['directions']['negative']}", negative, (0, 128, 255))
 
 
+def draw_waiting_zones(frame: Any, zones: list[dict[str, Any]], counts: dict[str, int]) -> None:
+    height, width = frame.shape[:2]
+    for zone in zones:
+        points = [to_pixel(point, width, height) for point in zone["points"]]
+        for start, end in zip(points, points[1:] + points[:1]):
+            cv2.line(frame, start, end, (255, 200, 0), 2, cv2.LINE_AA)
+        draw_label(
+            frame, f"{zone['name']}: {counts[zone['id']]} presentes",
+            points[0], (255, 200, 0),
+        )
+
+
 def draw_metrics_panel(
     frame: Any,
     current_counts: dict[str, int],
@@ -293,6 +318,13 @@ def build_crossing_summary(
 def main() -> None:
     args = parse_args()
     config = load_config(Path(args.config))
+    analyzer = TrafficAnalyzer(**config.get("traffic_analysis", {}))
+    priority_calculator = PriorityCalculator(**config.get("traffic_priority", {}))
+    phase_manager = PhaseManager(config.get("traffic_phases", []),
+                                 [zone["id"] for zone in config.get("waiting_zones", [])])
+    controller = TrafficLightController(phase_manager.phases,
+                                       SimulationParameters(**config.get("simulation_parameters", {})))
+    phase_names = {key: phase["name"] for key, phase in phase_manager.phases.items()}
     detection_config = config.get("detection", {})
     model_name = args.model or detection_config.get("model", "yolo11n.pt")
     confidence = (
@@ -327,6 +359,12 @@ def main() -> None:
         raise RuntimeError("No se pudo crear el video de salida.")
 
     lines = config["counting_lines"]
+    zones = config.get("waiting_zones", [])
+    zone_names = {zone["id"]: zone["name"] for zone in zones}
+    memory = TrafficMemory()
+    traffic_path = summary_path.with_name(summary_path.name.replace("_resumen.json", "_trafico.jsonl"))
+    if not zones:
+        print("Sin zonas de espera: configura waiting_zones para medir ocupación.")
     observed_ids: dict[str, set[int]] = defaultdict(set)
     track_history: dict[int, deque[Point]] = defaultdict(lambda: deque(maxlen=30))
     line_states: dict[tuple[str, int], tuple[int, Point]] = {}
@@ -354,7 +392,10 @@ def main() -> None:
         for direction in ("positive", "negative")
     ]
 
-    with csv_path.open("w", newline="", encoding="utf-8-sig") as csv_file:
+    live_started = time.monotonic()
+    with csv_path.open("w", newline="", encoding="utf-8-sig") as csv_file, traffic_path.open(
+        "w", encoding="utf-8"
+    ) as traffic_file:
         csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         csv_writer.writeheader()
 
@@ -363,6 +404,12 @@ def main() -> None:
                 ok, frame = capture.read()
                 if not ok:
                     break
+
+                # Video: reloj de la fuente; cámara: tiempo real de captura.
+                timestamp = (
+                    time.monotonic() - live_started
+                    if args.source.isdigit() else frame_index / source_fps
+                )
 
                 started = time.perf_counter()
                 result = model.track(
@@ -379,6 +426,7 @@ def main() -> None:
                 processing_fps = 1.0 / elapsed if elapsed else 0.0
 
                 current_counts = {name: 0 for name in COCO_CLASSES.values()}
+                vehicles = []
                 boxes = result.boxes
                 if boxes is not None and boxes.cls is not None:
                     class_ids = boxes.cls.int().cpu().tolist()
@@ -397,6 +445,8 @@ def main() -> None:
                         current_counts[class_name] += 1
                         if track_id is None:
                             continue
+                        if class_id in VEHICLE_CLASSES:
+                            vehicles.append((track_id, bottom_center((x1, y1, x2, y2), width, height)))
                         observed_ids[class_name].add(track_id)
                         center = ((x1 + x2) / (2 * width), (y1 + y2) / (2 * height))
                         track_history[track_id].append(center)
@@ -420,12 +470,33 @@ def main() -> None:
                                     counted_tracks.add(state_key)
                             line_states[state_key] = (side, center)
 
+                traffic_state = count_vehicles_by_zone(timestamp, vehicles, zones)
+                sampled = memory.update(traffic_state)
+                if sampled:
+                    analysis = analyzer.analyze(traffic_state, memory.states, zone_names)
+                    analysis_timestamp = timestamp
+                    priority = priority_calculator.calculate(analysis)
+                    phase_priorities = phase_manager.aggregate(priority, traffic_state.vehicles_by_zone)
+                # El reloj virtual avanza cada frame; las observaciones siguen muestreadas a 1 Hz.
+                decision = controller.update(timestamp, phase_priorities, args.simulation_confidence)
+                if sampled or decision["decision"] != "MANTENER":
+                    record = asdict(traffic_state)
+                    record["analysis_timestamp"] = analysis_timestamp
+                    record["analysis"] = {key: asdict(value) for key, value in analysis.items()}
+                    record["priority"] = asdict(priority)
+                    record.update(decision)
+                    traffic_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    if sampled:
+                        print(format_traffic_report(timestamp, analysis, priority, zone_names))
+                    print(format_decision(decision, phase_names))
+
                 maximum_counts = {
                     name: max(maximum_counts[name], current_counts[name])
                     for name in COCO_CLASSES.values()
                 }
                 annotated = result.plot()
                 draw_counting_lines(annotated, lines)
+                draw_waiting_zones(annotated, zones, traffic_state.vehicles_by_zone)
                 draw_metrics_panel(
                     annotated,
                     current_counts,
@@ -434,6 +505,12 @@ def main() -> None:
                     lines,
                     processing_fps,
                 )
+                light_names = {"GREEN": "VERDE", "YELLOW": "AMARILLO", "ALL_RED": "TODO-ROJO"}
+                draw_label(annotated,
+                           f"SIMULACION | FASE: {phase_names.get(decision['current_phase'], '-')} | "
+                           f"{light_names[decision['current_light_state']]} | "
+                           f"RESTANTE: {decision['remaining_seconds']:.1f}s | {decision['mode']}",
+                           (15, height - 15), (255, 255, 255))
                 writer.write(annotated)
 
                 row: dict[str, int | float] = {
@@ -485,6 +562,11 @@ def main() -> None:
         "confidence_threshold": float(confidence),
         "device": device_name,
         "frames_processed": frame_index,
+        "traffic_memory": [asdict(state) for state in memory.states],
+        "waiting_zones": zones,
+        "traffic_phases": list(phase_manager.phases.values()),
+        "simulation_parameters": asdict(controller.parameters),
+        "simulation_confidence": args.simulation_confidence,
         "performance": {
             "initialization_seconds": round(initialization_seconds, 3),
             "total_processing_seconds": round(total_processing_seconds, 3),
@@ -522,6 +604,7 @@ def main() -> None:
     print(f"Video: {video_path}")
     print(f"CSV: {csv_path}")
     print(f"Resumen: {summary_path}")
+    print(f"Estados de tráfico: {traffic_path}")
 
 
 if __name__ == "__main__":

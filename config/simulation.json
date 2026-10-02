@@ -1,0 +1,28 @@
+{
+  "description": "Escenario ficticio sin geometría ni conexión a infraestructura real",
+  "zone_ids": ["north", "south", "east", "west"],
+  "traffic_phases": [
+    {"id": "phase_ns", "name": "Norte-Sur", "zones": ["north", "south"]},
+    {"id": "phase_ew", "name": "Este-Oeste", "zones": ["east", "west"]}
+  ],
+  "simulation_parameters": {
+    "min_green_seconds": 5,
+    "max_green_seconds": 15,
+    "yellow_seconds": 2,
+    "all_red_seconds": 1,
+    "reference_score": 30,
+    "switch_margin": 1,
+    "starvation_wait_seconds": 25,
+    "starvation_bonus_per_second": 1,
+    "safe_green_seconds": 7
+  },
+  "duration_seconds": 120,
+  "events": [
+    {"timestamp": 0, "confidence": "high", "counts": {"north": 10, "south": 8, "east": 2, "west": 2}},
+    {"timestamp": 20, "confidence": "high", "counts": {"north": 5, "south": 4, "east": 9, "west": 8}},
+    {"timestamp": 45, "confidence": "high", "counts": {"north": 0, "south": 0, "east": 0, "west": 0}},
+    {"timestamp": 60, "confidence": "low", "counts": {"north": 8, "south": 6, "east": 5, "west": 4}},
+    {"timestamp": 80, "confidence": "error", "counts": {"north": 8, "south": 6, "east": 5, "west": 4}},
+    {"timestamp": 100, "confidence": "high", "counts": {"north": 8, "south": 6, "east": 5, "west": 4}}
+  ]
+}
