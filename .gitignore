@@ -33,3 +33,6 @@ Thumbs.db
 # Dataset local acumulativo
 data/experience/*.jsonl
 data/experience/*.lock
+
+videos/
+output/
