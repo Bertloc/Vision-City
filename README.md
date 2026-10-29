@@ -6,7 +6,13 @@ Prototipo académico de visión artificial para detectar, rastrear y contar cruc
 
 ## Alcance
 
-El programa trabaja con las clases persona, bicicleta, automóvil, motocicleta, autobús y camión. Genera un video anotado, un CSV por fotograma y un resumen JSON. No controla semáforos ni incluye dashboards, reconocimiento de placas o entrenamiento de modelos.
+El programa trabaja con las clases persona, bicicleta, automóvil, motocicleta, autobús y camión. Genera un video anotado, un CSV por fotograma, un resumen JSON y estados de tráfico JSONL. Incluye una interfaz Streamlit y un semáforo exclusivamente virtual basado en reglas y una máquina de estados. No controla infraestructura real, reconoce placas ni entrena modelos con sus decisiones.
+
+La presencia en zonas no demuestra que los vehículos estén detenidos. Los cruces detectados
+por línea y los IDs del rastreador no son vehículos únicos reales. La confianza del controlador
+es inyectada para simulación; no mide precisión de YOLO. La evaluación antes/después describe
+ocupación observada en un video que no reacciona al semáforo virtual: no demuestra una mejora
+causada por sus decisiones.
 
 ## Requisitos
 
@@ -48,16 +54,54 @@ Con el entorno virtual activado, el comando equivalente es:
 streamlit run streamlit_app.py
 ```
 
-1. Selecciona un video de `data/videos` o sube un `.mp4`, `.avi` o `.mov`.
-2. Selecciona `config/intersection.json` u otro JSON, o sube una configuración propia.
-   `config/simulation.json` corresponde al simulador de estados artificiales, no a videos.
-3. Presiona **Analizar**. Verás el estado de procesamiento y el avance por frames cuando el
-   archivo informe su longitud; en caso contrario se indica el frame procesado.
-4. Revisa el video, resumen, estado final del semáforo virtual, tabla y gráfica de vehículos
-   por zona. Descarga CSV, resumen JSON y JSONL (botones disponibles hasta 20 MiB por archivo).
+La navegación lateral organiza la consola en cinco secciones:
 
-Si no hay `waiting_zones`, aparece una advertencia: el análisis puede ejecutarse, pero sus
-resultados de tráfico no son representativos. No se crean polígonos ni fases automáticamente.
+| Sección | Contenido |
+|---|---|
+| Resumen | Video procesado, estado final virtual, indicadores y descargas |
+| Analizar video | Fuente, configuración, comprobaciones y progreso |
+| Tráfico | Presencia por zona, tendencias, clases y cruces por línea y sentido |
+| Semáforo virtual | Fase, estado, tiempos registrados, prioridades y motivos de decisiones |
+| Historial y resultados | Transiciones, experiencias de la ejecución, evaluación y archivos |
+
+1. Abre **Analizar video** y selecciona un video de `data/videos` o sube un `.mp4`, `.avi` o `.mov`.
+2. Selecciona `config/intersection.json` u otro JSON, o sube una configuración propia.
+   `config/simulation.json` corresponde al simulador de estados artificiales: no aparece en
+   el selector y también se rechazan archivos subidos con ese formato.
+3. Revisa las comprobaciones de líneas, zonas, fases, tiempos, prioridad, análisis y evaluación.
+   Los errores impiden iniciar; las zonas o fases ausentes se explican como limitaciones.
+4. Presiona **ANALIZAR VIDEO**. El progreso muestra porcentaje cuando la fuente informa su
+   longitud; de lo contrario muestra fotogramas procesados. La conversión para navegador es
+   un paso posterior, sin porcentaje inventado.
+5. Abre **Ver resumen** o navega a las otras secciones. Descarga video anotado, copia para
+   navegador, CSV, resumen JSON, tráfico JSONL y configuración efectiva. El límite de cada
+   botón es 20 MiB; los archivos mayores muestran su ubicación y permanecen en disco.
+
+Los resultados conservan el nombre original del video y la configuración de su ejecución,
+independientemente de las entradas seleccionadas después. Un nuevo análisis reemplaza el
+resultado mostrado solo cuando termina; si falla, se conserva el anterior. Navegar, descargar
+y consultar resultados no invoca el pipeline ni agrega experiencias. El historial visible
+corresponde a la ejecución seleccionada en la sesión, no es un explorador de todas las carpetas.
+
+La identidad visual se configura en `.streamlit/config.toml`: fondo azul oscuro, superficies
+neutras y acento cian. No requiere fuentes externas. Las piezas de marca admiten Fira Sans y
+Fira Code si están instaladas en el equipo del navegador, con alternativas del sistema;
+los controles mantienen la tipografía nativa de Streamlit. El CSS de `ui_results.py` afecta
+a sus clases propias y a la clave pública `analyze_action` de un contenedor para dar contraste
+al botón cian. No depende de clases internas de Streamlit; esa clave es parte de la
+[API de contenedores desde 1.42](https://docs.streamlit.io/1.42.0/develop/api-reference/layout/st.container).
+
+Si no hay `waiting_zones`, aparece una advertencia: la detección y los cruces pueden ejecutarse,
+pero la presencia se muestra como **Sin dato**, aunque el archivo contenga ceros. Sin fases,
+el semáforo virtual permanece en **Todas las direcciones en rojo**. No se crean polígonos ni
+fases automáticamente y la configuración entregada sigue sin calibración geométrica de zonas.
+
+Las tarjetas y tablas identifican el instante del video. La fase con verde puede diferir de
+la que tenga mayor prioridad calculada; el tiempo restante es una observación guardada,
+no una cuenta regresiva en vivo. `ALL_RED` no concede verde a la fase anterior y `SAFE_MODE`
+describe un modo de simulación, no un cuarto color. Las esperas disponibles son por fase,
+no por vehículo. Los valores ausentes y el historial insuficiente no se presentan como ceros
+o tendencias medidas. Las tablas complementan los colores de gráficas y semáforos.
 
 CLI e interfaz llaman a `app.process_video(source, config_path, output_dir, progress_callback)`.
 El callback recibe `(frames_procesados, total_o_None)`. La función devuelve las rutas `video`,
@@ -81,6 +125,11 @@ Conserva la selección automática CPU/CUDA; no hay reintento automático en CPU
 El análisis es síncrono con progreso: no hay cola, cancelación ni procesamiento concurrente
 administrado. Archivos grandes requieren memoria para subida/reproducción y espacio para ambas
 copias del resultado; el límite de subida depende de la configuración de Streamlit.
+
+La interfaz permanece compatible con `streamlit>=1.42,<2`. Los controles nativos conservan
+su foco de teclado y las columnas se apilan en pantallas pequeñas. La consulta de archivos
+y dataset es local; con resultados muy grandes puede requerir agregación o paginación futura.
+No se sincronizan las tarjetas con la posición de reproducción del video.
 
 ## Conteo por líneas
 

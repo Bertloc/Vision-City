@@ -1,3 +1,8 @@
+<<<<<<< Updated upstream
+=======
+"""Consola Streamlit sobre el mismo pipeline que usa el CLI."""
+
+>>>>>>> Stashed changes
 import json
 from pathlib import Path
 import subprocess
@@ -8,6 +13,7 @@ import imageio_ffmpeg
 import pandas as pd
 import streamlit as st
 
+<<<<<<< Updated upstream
 try:
     from app import load_config, process_video
     HAS_BACKEND = True
@@ -19,6 +25,23 @@ ROOT = Path(__file__).resolve().parent
 # ==========================================
 # CONVERSIÓN DE VIDEO PARA NAVEGADOR (H.264)
 # ==========================================
+=======
+from app import load_config, process_video
+from decision_evaluator import EvaluationParameters
+from phase_manager import PhaseManager
+from traffic_analysis import TrafficAnalyzer
+from traffic_light_controller import SimulationParameters
+from traffic_priority import PriorityCalculator
+from ui_results import (
+    analysis_rows, apply_visual_style, decision_explanation, humanize_eligibility,
+    humanize_light_state, humanize_phase_name, humanize_reward, humanize_trend,
+    session_experiences, show_results,
+)
+
+ROOT = Path(__file__).resolve().parent
+SECTIONS = ("Resumen", "Analizar video", "Tráfico", "Semáforo virtual", "Historial y resultados")
+
+>>>>>>> Stashed changes
 
 def browser_video(source: Path) -> Path:
     """Recodifica el MP4 de salida a H.264 para compatibilidad nativa en navegadores web."""
@@ -38,6 +61,7 @@ def browser_video(source: Path) -> Path:
 # CONFIGURACIÓN Y ESTILOS
 # ==========================================
 
+<<<<<<< Updated upstream
 st.set_page_config(
     page_title="Vision City | Sistema de Gestión Semafórica",
     page_icon="🚦",
@@ -387,6 +411,114 @@ if st.sidebar.button("▶️ EJECUTAR INFERENCIA VIAL", disabled=btn_disabled, u
             if uploaded_video is not None:
                 source_video = temp_path / ("video" + Path(uploaded_video.name).suffix.lower())
                 source_video.write_bytes(uploaded_video.getbuffer())
+=======
+def validate_video_config(data):
+    """Reutiliza los validadores del pipeline sin cargar YOLO ni abrir el dataset."""
+    try:
+        raw = json.loads(data)
+        if not isinstance(raw, dict):
+            raise ValueError("La configuración debe ser un objeto JSON.")
+        if "events" in raw and "counting_lines" not in raw:
+            raise ValueError("Este es un escenario de simulación, no una configuración para video.")
+        with tempfile.TemporaryDirectory(prefix="vision_config_") as temporary:
+            path = Path(temporary) / "intersection.json"
+            path.write_bytes(data)
+            config = load_config(path)
+        TrafficAnalyzer(**config.get("traffic_analysis", {}))
+        PriorityCalculator(**config.get("traffic_priority", {}))
+        PhaseManager(config.get("traffic_phases", []), [zone["id"] for zone in config.get("waiting_zones", [])])
+        SimulationParameters(**config.get("simulation_parameters", {}))
+        EvaluationParameters(**config.get("experience_evaluation", {}))
+        detection = config.get("detection", {})
+        confidence = detection.get("confidence_threshold", 0.35)
+        if not isinstance(confidence, (int, float)) or not 0 < confidence <= 1:
+            raise ValueError("El umbral de detección debe ser mayor que 0 y menor o igual que 1.")
+        if not isinstance(detection.get("model", "yolo11n.pt"), str) or not detection.get("model", "yolo11n.pt").strip():
+            raise ValueError("Indica el nombre o ruta del modelo de detección.")
+        return config
+    except (ValueError, TypeError, AttributeError, KeyError, UnicodeError) as error:
+        raise ValueError("Revisa el archivo de configuración: " + str(error)) from error
+
+
+def configuration_message(error):
+    detail = str(error).casefold()
+    if "escenario de simulación" in detail:
+        return "Este archivo contiene datos artificiales para el simulador. Elige una configuración de intersección para video."
+    fields = (("counting_line", "las líneas de conteo"), ("waiting_zone", "las zonas de presencia"),
+              ("zona ", "las zonas de presencia"), ("fase", "las fases y sus zonas"),
+              ("traffic_phases", "las fases y sus zonas"), ("simulation_parameters", "los tiempos del semáforo virtual"),
+              ("min_green", "los tiempos del semáforo virtual"), ("experience_evaluation", "la configuración de evaluación"),
+              ("window_seconds", "la ventana del análisis de tráfico"), ("min_samples", "las muestras del análisis de tráfico"),
+              ("pesos", "los pesos de prioridad"), ("detección", "los parámetros de detección"))
+    for field, label in fields:
+        if field in detail:
+            return f"No se puede iniciar: revisa {label} en el JSON de configuración. Consulta el detalle para localizar el campo."
+    return "No se puede iniciar: revisa el formato JSON y los parámetros del archivo. Consulta el detalle para localizar el campo."
+
+
+def show_configuration_warnings(config):
+    if not config.get("waiting_zones"):
+        st.warning("Sin zonas configuradas: se pueden detectar objetos y contar cruces, pero no medir presencia por zona.")
+    if not config.get("traffic_phases"):
+        st.warning("Sin fases configuradas: el semáforo virtual permanecerá con todas las direcciones en rojo. No habrá experiencias de verdes completos.")
+
+
+def show_analysis():
+    st.write("Prepara la fuente y la geometría del cruce. Los resultados describirán este video; no son monitoreo en vivo.")
+    video_column, config_column = st.columns(2)
+    with video_column:
+        st.subheader("1. Elige un video")
+        mode = st.radio("Origen del video", ["Elegir un video disponible", "Subir archivo"])
+        uploaded_video = None
+        source = None
+        if mode == "Subir archivo":
+            uploaded_video = st.file_uploader("Subir video", type=["mp4", "avi", "mov"])
+        else:
+            videos = sorted(path for path in (ROOT / "data/videos").glob("*")
+                            if path.suffix.lower() in {".mp4", ".avi", ".mov"})
+            source = st.selectbox("Video disponible", videos, format_func=lambda path: path.name)
+
+    with config_column:
+        configs = sorted((path for path in (ROOT / "config").glob("*.json") if path.name != "simulation.json"),
+                         key=lambda path: (path.name != "intersection.json", path.name))
+        st.subheader("2. Elige la configuración del cruce")
+        st.caption("Define dónde están las zonas y cómo funciona el cruce.")
+        config_path = st.selectbox("Configuración de intersección", configs, format_func=lambda path: path.name)
+        uploaded_config = st.file_uploader("O sube otro archivo de configuración", type=["json"])
+        config_data = None
+        try:
+            config_data = uploaded_config.getvalue() if uploaded_config is not None else config_path.read_bytes() if config_path else None
+            if config_data is None:
+                st.info("Elige o sube un archivo JSON de intersección para continuar.")
+            else:
+                config = validate_video_config(config_data)
+                show_configuration_warnings(config)
+                st.caption(f"Configuración comprobada · {len(config['counting_lines'])} líneas · "
+                           f"{len(config.get('waiting_zones', []))} zonas · {len(config.get('traffic_phases', []))} fases")
+        except (ValueError, OSError) as error:
+            st.error(configuration_message(error))
+            with st.expander("Ver detalles técnicos"):
+                st.code(str(error))
+            config_data = None
+
+    if source is None and uploaded_video is None:
+        st.info("Selecciona o sube un video para habilitar el análisis.")
+    st.caption("El umbral de detección no es precisión. La confianza del controlador se inyecta para simulación; no se estima desde YOLO.")
+    if "result" in st.session_state:
+        st.info("El resultado anterior se conserva hasta completar otro análisis. Cambiar estas entradas no modifica sus datos.")
+    with st.container(key="analyze_action"):
+        start = st.button("ANALIZAR VIDEO", type="primary", disabled=config_data is None or (source is None and uploaded_video is None))
+    if start:
+        status = st.empty()
+        progress = st.progress(0)
+
+        def on_progress(done, total):
+            if total:
+                fraction = min(done / total, 1.0)
+                progress.progress(fraction, text=f"Analizando el tráfico... {fraction:.0%}")
+            else:
+                status.info(f"Analizando el tráfico · {done} fotogramas procesados. La fuente no informa su longitud.")
+>>>>>>> Stashed changes
 
             status_box.info("Ejecutando pipeline de detección y algoritmos de asignación de fase...")
             res = process_video(
@@ -398,6 +530,7 @@ if st.sidebar.button("▶️ EJECUTAR INFERENCIA VIAL", disabled=btn_disabled, u
 
         status_box.info("Optimizando flujo de salida para renderizado...")
         try:
+<<<<<<< Updated upstream
             res["web_video"] = browser_video(res["video"])
         except Exception:
             res["web_video"] = None
@@ -408,6 +541,70 @@ if st.sidebar.button("▶️ EJECUTAR INFERENCIA VIAL", disabled=btn_disabled, u
     except Exception as error:
         status_box.empty()
         st.error(f"Error durante el procesamiento del flujo: {str(error)[:150]}")
+=======
+            video_name = uploaded_video.name if uploaded_video is not None else source.name
+            config_name = uploaded_config.name if uploaded_config is not None else config_path.name
+            work = ROOT / "output" / "ui"
+            work.mkdir(parents=True, exist_ok=True)
+            output = work / uuid4().hex
+            # Solo las entradas copiadas son temporales; los resultados sobreviven a los reruns.
+            with tempfile.TemporaryDirectory(prefix="upload_", dir=work) as temp:
+                temporary = Path(temp)
+                selected_config = temporary / "intersection.json"
+                selected_config.write_bytes(config_data)
+                load_config(selected_config)
+                if uploaded_video is not None:
+                    source = temporary / ("video" + Path(uploaded_video.name).suffix.lower())
+                    source.write_bytes(uploaded_video.getbuffer())
+                status.info("Estamos detectando vehículos y observando cómo cambia el tráfico.")
+                with st.spinner("Analizando el tráfico..."):
+                    result = process_video(source, selected_config, output, on_progress,
+                                           source_video_name=uploaded_video.name if uploaded_video is not None else str(source))
+                # Conservar la configuración efectiva para poder interpretar el resultado.
+                (output / "configuration.json").write_bytes(config_data)
+            status.info("Preparando el video para que puedas verlo...")
+            try:
+                result["web_video"] = browser_video(result["video"])
+            except (OSError, RuntimeError, subprocess.CalledProcessError):
+                result["web_video"] = None
+            result["ui_context"] = {"video_name": video_name, "config_name": config_name,
+                                    "run_id": output.name, "configuration": output / "configuration.json"}
+            st.session_state["result"] = result
+            progress.progress(1.0, text="Finalizado")
+            status.empty()
+            st.success("Análisis finalizado. Puedes consultar el resumen y descargar sus resultados.")
+            st.button("Ver resumen", on_click=lambda: st.session_state.update(section="Resumen"))
+        except Exception as error:
+            status.empty()
+            st.error("No pudimos terminar el análisis. Revisa el video y la configuración del cruce.")
+            with st.expander("Ver detalles técnicos"):
+                st.code(str(error)[:500])
+
+
+def main():
+    st.set_page_config(page_title="Vision City · Análisis de intersecciones", layout="wide")
+    with st.sidebar:
+        st.title("VISION CITY")
+        st.caption("Análisis de intersecciones")
+        section = st.radio("Navegación", SECTIONS, key="section")
+        st.divider()
+        st.caption("Prototipo académico · Semáforo virtual")
+        st.caption("Decisiones por reglas. No hay aprendizaje automático de decisiones ni control físico.")
+    st.title(section)
+    apply_visual_style()
+    if section == "Analizar video":
+        show_analysis()
+    elif "result" in st.session_state:
+        try:
+            show_results(st.session_state["result"], section)
+        except (OSError, ValueError, KeyError) as error:
+            st.error("No pudimos mostrar los resultados guardados de este video.")
+            with st.expander("Ver detalles técnicos"):
+                st.code(str(error)[:500])
+    else:
+        st.info("Sin análisis. Abre Analizar video para elegir una fuente y su configuración.")
+        st.button("Preparar análisis", on_click=lambda: st.session_state.update(section="Analizar video"))
+>>>>>>> Stashed changes
 
 # ==========================================
 # CONTENIDO PRINCIPAL

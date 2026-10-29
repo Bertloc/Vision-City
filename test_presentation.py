@@ -7,15 +7,31 @@ from streamlit.testing.v1 import AppTest
 
 from streamlit_app import (decision_explanation, humanize_eligibility,
                            humanize_light_state, humanize_phase_name,
-                           humanize_reward, humanize_trend, session_experiences)
+                           humanize_reward, humanize_trend, session_experiences,
+                           validate_video_config, configuration_message)
 
 
 def render_results(result):
     from streamlit_app import show_results
-    show_results(result)
+    show_results(result, "Historial y resultados")
 
 
 class PresentationTests(unittest.TestCase):
+    def test_configuration_preflight_reuses_pipeline_validation(self):
+        config = json.loads((Path(__file__).parent / "config/intersection.json").read_text(encoding="utf-8"))
+        self.assertEqual(validate_video_config(json.dumps(config).encode())["waiting_zones"], [])
+        for bad in ([], {**config, "traffic_phases": [{"id": "p", "name": "P", "zones": ["unknown"]}]},
+                    {**config, "simulation_parameters": {"yellow_seconds": -1}},
+                    {**config, "traffic_analysis": {"window_seconds": 0}},
+                    {**config, "traffic_priority": {"current_weight": -1}},
+                    {**config, "experience_evaluation": {"enabled": 1}},
+                    {**config, "counting_lines": [None]}, {**config, "detection": {"confidence_threshold": 2}}):
+            with self.subTest(config=bad), self.assertRaises(ValueError):
+                validate_video_config(json.dumps(bad).encode())
+        with self.assertRaises(ValueError) as raised:
+            validate_video_config(b'{"events": []}')
+        self.assertIn("datos artificiales", configuration_message(raised.exception))
+
     def test_trends_and_insufficient_information(self):
         self.assertIn("creciendo", humanize_trend("growing"))
         self.assertIn("estable", humanize_trend("stable"))
@@ -27,7 +43,7 @@ class PresentationTests(unittest.TestCase):
     def test_light_names(self):
         self.assertIn("Verde", humanize_light_state("GREEN"))
         self.assertIn("Amarillo", humanize_light_state("YELLOW"))
-        self.assertIn("Tiempo de despeje", humanize_light_state("ALL_RED"))
+        self.assertIn("Todas las direcciones en rojo", humanize_light_state("ALL_RED"))
         self.assertEqual(humanize_light_state(None), "Estado no disponible")
 
     def test_reward_band_is_only_presentation(self):
@@ -68,7 +84,10 @@ class PresentationTests(unittest.TestCase):
     def test_initial_screen(self):
         app = AppTest.from_file(str(Path(__file__).parent / "streamlit_app.py")).run(timeout=20)
         self.assertFalse(app.exception)
-        self.assertEqual(app.title[0].value, "VISIÓN CITY")
+        self.assertEqual(app.radio[0].value, "Resumen")
+        self.assertIn("Sin análisis", app.info[0].value)
+        app.radio[0].set_value("Analizar video").run()
+        self.assertFalse(app.exception)
         self.assertEqual(app.button[0].label, "ANALIZAR VIDEO")
         self.assertIn("1. Elige un video", [heading.value for heading in app.subheader])
         self.assertIn("2. Elige la configuración del cruce", [heading.value for heading in app.subheader])
@@ -105,7 +124,7 @@ class PresentationTests(unittest.TestCase):
             original = dataset.read_bytes()
             app = AppTest.from_function(render_results, args=({**paths, "summary": summary},)).run(timeout=20)
             self.assertFalse(app.exception)
-            table = app.dataframe[0].value
+            table = next(frame.value for frame in app.dataframe if "Vehículos antes" in frame.value.columns)
             self.assertEqual(table.iloc[0]["Fase atendida"], "Norte - Sur")
             self.assertEqual(table.iloc[0]["Vehículos antes"], 8)
             self.assertIn("positivo", table.iloc[0]["Resultado"])

@@ -71,3 +71,36 @@ Columnas fijas:
 `average_fps_total` incluye la inicialización. `average_fps_after_warmup` excluye los primeros 10 fotogramas. Los tiempos por fotograma miden detección y rastreo; `wall_clock_elapsed_seconds` conserva además el tiempo transcurrido de la ejecución completa.
 
 `crossings` separa cada línea, clase y dirección e incluye totales por sentido. `tracking_ids_observed` nunca debe presentarse como cantidad real de objetos o flujo vehicular.
+
+## Presentación en Streamlit
+
+`streamlit_app.py` selecciona y valida entradas reutilizando los validadores del motor,
+ejecuta `process_video` solo al pulsar Analizar y prepara la copia H.264. `ui_results.py`
+presenta los resultados existentes sin ejecutar detección ni escribir experiencias.
+
+El diccionario de resultado guardado en Session State añade `ui_context` con nombre original
+del video, nombre de configuración, identificador de ejecución y ruta de la copia efectiva.
+Es metadato de interfaz: no modifica el JSON de resumen ni los formatos CSV o JSONL del motor.
+La fecha y los parámetros originales siguen disponibles en los detalles técnicos del resumen.
+Cambiar las entradas no cambia la procedencia del resultado mostrado.
+
+- El CSV conserva detecciones visibles por clase en cada frame. Su última fila permite
+  mostrar objetos visibles al final sin confundirlos con máximos simultáneos.
+- El JSONL de tráfico aporta presencia, análisis, prioridad y transiciones. Las gráficas
+  excluyen registros de transición cuyo `analysis_timestamp` pertenece a una muestra anterior.
+- `total_vehicles` deduplica IDs dentro de la unión de zonas; sumar ocupaciones puede duplicar
+  vehículos si hay zonas solapadas. No es el total de todo el encuadre ni mide detención.
+- La presencia por zonas incluye automóvil, motocicleta, autobús y camión con ID. Peatones y
+  bicicletas siguen disponibles en detección y cruces, pero no en esa medida de presencia.
+- Los estados y tiempos finales corresponden al reloj del video. La próxima fase durante
+  el despeje es provisional. Sin fases, `ALL_RED` significa que no hay dirección favorecida.
+- La confianza es inyectada para simulación; ni ella ni `confidence_threshold` son precisión
+  validada. Un verde completo puede tener `reward: null` por no ser evaluable.
+- El dataset de experiencias se filtra por `session_id` al consultar una ejecución. El
+  tamaño acumulado del resumen corresponde al final de esa ejecución. Consultarlo no escribe.
+
+La puntuación de evaluación sigue midiendo reducción de ocupación con penalización por
+crecimiento de otras zonas. No mide throughput ni demuestra un efecto causal del controlador
+sobre vehículos de un video grabado. La banda de texto entre −0.5 y +0.5 es solo presentación;
+no cambia la fórmula, elegibilidad ni los registros originales. No hay aprendizaje automático
+de decisiones implementado.
